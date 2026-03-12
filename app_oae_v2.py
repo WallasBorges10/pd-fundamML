@@ -100,6 +100,13 @@ with st.spinner("Carregando e processando dados... Isso pode levar alguns minuto
     df = load_and_preprocess()
 
 # ============================================================
+# DEFINIR COLUNAS NUMÉRICAS E CATEGÓRICAS GLOBALMENTE
+# ============================================================
+X_full = df.drop(columns=['TARGET'])
+num_cols = X_full.select_dtypes(include=['int64', 'float64']).columns
+cat_cols = X_full.select_dtypes(include=['object', 'category']).columns
+
+# ============================================================
 # SIDEBAR - NAVEGAÇÃO
 # ============================================================
 st.sidebar.title("Navegação")
@@ -221,10 +228,10 @@ if opcao == "Visão Geral dos Dados":
 elif opcao == "Modelagem e Resultados":
     st.header("🧠 Modelagem e Resultados")
 
-    X_full = df.drop(columns=['TARGET'])
+    X = df.drop(columns=['TARGET'])
     y = df['TARGET']
-    num_cols = X_full.select_dtypes(include=['int64', 'float64']).columns
-    cat_cols = X_full.select_dtypes(include=['object', 'category']).columns
+    num_cols_local = X.select_dtypes(include=['int64', 'float64']).columns
+    cat_cols_local = X.select_dtypes(include=['object', 'category']).columns
 
     numeric_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median')),
@@ -236,11 +243,11 @@ elif opcao == "Modelagem e Resultados":
     ])
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', numeric_transformer, num_cols),
-            ('cat', categorical_transformer, cat_cols)
+            ('num', numeric_transformer, num_cols_local),
+            ('cat', categorical_transformer, cat_cols_local)
         ])
 
-    X_train, X_test, y_train, y_test = train_test_split(X_full, y, test_size=0.3, random_state=42, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
 
     st.subheader("Modelo Baseline: Perceptron")
     pipeline_perceptron = Pipeline(steps=[
@@ -305,19 +312,34 @@ elif opcao == "Modelagem e Resultados":
         st.warning("Imagem 'importancia_features.png' não encontrada.")
 
 # ============================================================
-# RELATÓRIO TÉCNICO (com visualização e download)
+# RELATÓRIO TÉCNICO (com visualização e download em PDF)
 # ============================================================
 elif opcao == "Relatório Técnico":
     st.header("📄 Relatório Técnico")
 
-    # Exibe o conteúdo do relatório (pode ser um resumo ou o texto completo)
-    with open("relatorio-pd-fundamentos.docx", "rb") as file:
-        st.download_button(
-            label="📥 Baixar relatório completo (DOCX)",
-            data=file,
-            file_name="relatorio_tecnico.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+    # Tentar download em PDF, se existir
+    pdf_path = "relatorio-pd-fundamentos.pdf"
+    docx_path = "relatorio-pd-fundamentos (1).docx"
+
+    if os.path.exists(pdf_path):
+        with open(pdf_path, "rb") as file:
+            st.download_button(
+                label="📥 Baixar relatório completo (PDF)",
+                data=file,
+                file_name="relatorio_tecnico.pdf",
+                mime="application/pdf"
+            )
+    elif os.path.exists(docx_path):
+        with open(docx_path, "rb") as file:
+            st.download_button(
+                label="📥 Baixar relatório completo (DOCX)",
+                data=file,
+                file_name="relatorio_tecnico.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        st.warning("Arquivo PDF não encontrado. Disponibilizando versão DOCX.")
+    else:
+        st.error("Arquivo do relatório não encontrado.")
 
     st.markdown("""
     ### Descrição do Problema e dos Dados
@@ -358,50 +380,48 @@ elif opcao == "Relatório Técnico":
 elif opcao == "Testar o Modelo":
     st.header("🔍 Testar o Modelo Random Forest")
 
-    # Carregar ou treinar o modelo (usando cache)
-    @st.cache_resource
-    def get_model():
-        modelo_path = "modelo_pontes_ny_rf_deploy.joblib"
-        if os.path.exists(modelo_path):
-            try:
-                modelo = joblib.load(modelo_path)
-                st.success("Modelo salvo carregado com sucesso!")
-                return modelo
-            except Exception as e:
-                st.warning(f"Não foi possível carregar o modelo salvo: {e}")
-                st.info("Treinando modelo com os dados carregados...")
-        else:
-            st.info("Arquivo do modelo não encontrado. Treinando com os dados carregados...")
+    # Upload do modelo salvo
+    uploaded_file = st.file_uploader("Carregue o arquivo do modelo treinado (modelo_pontes_ny_rf_deploy.joblib)", type=["joblib"])
 
-        # Treinar modelo com os melhores parâmetros
-        X_local = df.drop(columns=['TARGET'])
-        y_local = df['TARGET']
-        num_cols_local = X_local.select_dtypes(include=['int64', 'float64']).columns
-        cat_cols_local = X_local.select_dtypes(include=['object', 'category']).columns
+    modelo = None
 
-        numeric_transformer = Pipeline(steps=[
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ])
-        categorical_transformer = Pipeline(steps=[
-            ('imputer', SimpleImputer(strategy='most_frequent')),
-            ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-        ])
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ('num', numeric_transformer, num_cols_local),
-                ('cat', categorical_transformer, cat_cols_local)
+    if uploaded_file is not None:
+        try:
+            modelo = joblib.load(uploaded_file)
+            st.success("Modelo carregado com sucesso!")
+        except Exception as e:
+            st.error(f"Erro ao carregar o modelo: {e}")
+    else:
+        st.info("Nenhum modelo carregado. O modelo será treinado automaticamente com os dados disponíveis.")
+
+    # Se não carregou, treinar
+    if modelo is None:
+        with st.spinner("Treinando modelo Random Forest (pode levar alguns minutos)..."):
+            X_local = df.drop(columns=['TARGET'])
+            y_local = df['TARGET']
+            num_cols_local = X_local.select_dtypes(include=['int64', 'float64']).columns
+            cat_cols_local = X_local.select_dtypes(include=['object', 'category']).columns
+
+            numeric_transformer = Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
             ])
+            categorical_transformer = Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+            ])
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ('num', numeric_transformer, num_cols_local),
+                    ('cat', categorical_transformer, cat_cols_local)
+                ])
 
-        modelo = Pipeline(steps=[
-            ('preprocessor', preprocessor),
-            ('classifier', RandomForestClassifier(class_weight='balanced', n_estimators=200, random_state=42))
-        ])
-        modelo.fit(X_local, y_local)
-        st.success("Modelo treinado com sucesso!")
-        return modelo
-
-    modelo = get_model()
+            modelo = Pipeline(steps=[
+                ('preprocessor', preprocessor),
+                ('classifier', RandomForestClassifier(class_weight='balanced', n_estimators=200, random_state=42))
+            ])
+            modelo.fit(X_local, y_local)
+            st.success("Modelo treinado com sucesso!")
 
     # Preparar dados de teste
     X = df.drop(columns=['TARGET'])
@@ -489,7 +509,7 @@ elif opcao == "Testar o Modelo":
                 # Será substituído depois
                 default_row[col] = None
             else:
-                if col in num_cols:  # agora num_cols está definido globalmente
+                if col in num_cols:  # num_cols global
                     default_row[col] = X[col].median()
                 else:
                     default_row[col] = X[col].mode()[0] if not X[col].mode().empty else None
